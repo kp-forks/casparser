@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0
+
+### New
+
+- **Gift (inter-folio transfer) transactions.** Adds `GIFT_IN` / `GIFT_OUT`
+  transaction types, classified on the `"gift"` keyword together with the units
+  sign. Closes #134.
+- **`TransactionData.gift_folio`.** Carries the counterparty folio named in a
+  gift row's description, so a donor's statement can be linked to the donee's
+  across two CAS files. `None` for all other transaction types.
+
+### Fixed
+
+- Gift row mistaken for a folio boundary.
+
 ## 1.1.0
 
 ### New
