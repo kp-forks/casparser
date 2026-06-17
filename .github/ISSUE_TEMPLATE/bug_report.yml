@@ -1,0 +1,118 @@
+name: Bug report
+description: Report a parsing error, crash, or incorrect output.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report! 🙏
+
+        > [!CAUTION]
+        > **A CAS is a sensitive financial document and its password is usually your PAN.**
+        > **Never** paste your PAN, password, account numbers, or an unredacted statement here.
+        > If you can attach a sample, redact it first (black out names, PAN, folio numbers,
+        > and amounts) — the parser only needs the *layout* to reproduce most issues.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched [existing issues](https://github.com/codereverser/casparser/issues?q=is%3Aissue) and didn't find a duplicate.
+          required: true
+        - label: I have removed all personal/sensitive information (PAN, password, account numbers, holdings) from everything below.
+          required: true
+
+  - type: input
+    id: casparser-version
+    attributes:
+      label: casparser version
+      description: "Output of `casparser --version`."
+      placeholder: "1.2.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: "Output of `python --version`."
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issuer
+    attributes:
+      label: CAS issuer
+      description: Which issuer produced the statement?
+      options:
+        - CAMS
+        - KFintech
+        - NSDL
+        - CDSL
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: cas-type
+    attributes:
+      label: CAS type (CAMS/KFintech only)
+      description: Summary or Detailed statement? Leave as N/A for NSDL/CDSL eCAS.
+      options:
+        - Summary
+        - Detailed
+        - Not sure
+        - N/A (NSDL/CDSL)
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+      placeholder: "casparser raised an error / dropped a scheme / reported the wrong amount …"
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or code used
+      description: The exact CLI command or Python snippet. This is automatically formatted as code — no need for backticks. Remember to mask the password.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Full traceback / error output
+      description: The complete error, not just the last line. This is automatically formatted as code.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: sample
+    attributes:
+      label: Redacted sample (optional)
+      description: |
+        If you can, attach a **redacted** CAS PDF (drag-and-drop) that reproduces the issue.
+        A redacted file with the real *layout* but fake/blacked-out values is usually enough.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: share-by-email
+    attributes:
+      label: Sharing a sample privately
+      description: |
+        Prefer not to attach a file on a public issue? You can share a **redacted** CAS
+        privately by email instead — mention it here and I'll follow up with an address
+        to send it to (or reach me directly at codereverser@gmail.com).
+      options:
+        - label: I'm willing to share a redacted CAS privately by email if it would help.
+          required: false
