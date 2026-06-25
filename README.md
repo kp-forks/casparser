@@ -363,13 +363,7 @@ failing scheme name(s).
 
 ## License
 
-CASParser is distributed under the MIT license. Up to v0.8 the optional
-`mupdf` / `fast` extra pulled in [PyMuPDF](https://github.com/pymupdf/PyMuPDF) /
-[MuPDF](https://mupdf.com/license.html), which would have caused GNU GPL v3
-and GNU Affero GPL v3 to apply transitively. v1.0 dropped that extra
-(the PyMuPDF and pdfminer.six backends are gone; the parser now runs on
-[pypdfium2](https://github.com/pypdfium2-team/pypdfium2), which is dual
-Apache-2.0 / BSD-3), so casparser is now pure MIT end-to-end.
+CASParser is distributed under the MIT license.
 
 ## Resources
 1. [CAS from CAMS](https://www.camsonline.com/Investors/Statements/Consolidated-Account-Statement)
