@@ -268,8 +268,13 @@ Demat statements return holdings (no transactions), grouped per demat account:
       market_price: decimal | null,
     }[],
   }[],
+  parse_warnings: string[],              // non-fatal demat data-quality warnings
 }
 ```
+
+A non-empty `parse_warnings` means at least one holding's `nav` / `value` could
+not be reconciled arithmetically during parsing; the data for that holding
+should be treated with caution.
 
 ### CLI
 

@@ -241,6 +241,9 @@ class NSDLCASData(BaseModel):
     statement_period: StatementPeriod
     investor_info: InvestorInfo
     file_type: FileType
+    # Non-fatal data-quality warnings from NSDL demat parsing (e.g. a
+    # holdings row whose nav/value could not be confirmed arithmetically).
+    parse_warnings: List[str] = []
     model_config = ConfigDict(
         populate_by_name=True,
         use_enum_values=True,

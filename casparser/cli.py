@@ -101,12 +101,12 @@ def print_nsdl(parsed_data: NSDLCASData):
     for account in parsed_data.accounts:
         balance = account.balance
         value += balance
-        running_balance = 0
+        running_balance = Decimal(0)
         table_rows = []
         if len(account.equities) > 0:
             table_rows.append(["[italic]Equities[/]"])
         for equity in account.equities:
-            running_balance += equity.num_shares * equity.price
+            running_balance += equity.value
             table_rows.append(
                 [
                     equity.name,
@@ -119,7 +119,7 @@ def print_nsdl(parsed_data: NSDLCASData):
         if len(account.mutual_funds) > 0:
             table_rows.append(["[italic]Mutual Funds[/]"])
         for mf in account.mutual_funds:
-            running_balance += mf.nav * mf.balance
+            running_balance += mf.value
             table_rows.append(
                 [
                     mf.name,
@@ -127,6 +127,19 @@ def print_nsdl(parsed_data: NSDLCASData):
                     format_number(mf.balance),
                     formatINR(mf.nav),
                     formatINR(mf.value),
+                ]
+            )
+        if len(account.bonds) > 0:
+            table_rows.append(["[italic]Bonds[/]"])
+        for bond in account.bonds:
+            running_balance += bond.value
+            table_rows.append(
+                [
+                    bond.name,
+                    bond.isin,
+                    format_number(bond.num_bonds),
+                    formatINR(bond.market_price or bond.face_value or 0),
+                    formatINR(bond.value),
                 ]
             )
         if is_close(balance, running_balance, tol=float(balance or 1) * 0.01):

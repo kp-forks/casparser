@@ -74,6 +74,15 @@ DP_CLIENT_RE = re.compile(
 )
 PAN_RE = re.compile(r"(.+?)\s*\(PAN\s*:\s*([^)]+)\)", re.I)
 MF_FOLIOS_HEADER_RE = re.compile(r"^Mutual\s+Fund\s+Folios\b", re.I)
+FOLIO_TAIL_RE = re.compile(r"^\d+/\d+$")
+
+# Coarse x-grouping for the units column cluster and co-located value cells.
+# Coarse inter-column gap tolerance (points) for units-cluster grouping and
+# co-located value-cell dedup — not absolute column positions.
+UNITS_CLUSTER_X_EPS = 35.0
+VALUE_COL_X_EPS = 35.0
+ECHO_REL_EPS = Decimal("0.03")
+PLACEHOLDER_UCCS = {"NOT AVAILABLE", "NA", "N.A.", ""}
 
 
 # --- decimal helpers ---
@@ -108,43 +117,6 @@ def _looks_numeric(text: str) -> bool:
     if not s:
         return False
     return bool(NUMERIC_RE.match(s))
-
-
-# --- column anchors (x_left ranges) for the detailed MF Holdings table ---
-
-
-@dataclass(frozen=True)
-class _MFHoldingsCols:
-    # x_left bands for the 10 columns of the detailed MF Holdings
-    # table. Each band must not overlap its neighbour AND must cover
-    # the full range a cell's `x_left` can drift across — PDFium
-    # rounds glyph positions slightly differently across fixtures, so
-    # bands are deliberately wider than the visual column width
-    # (gap-to-gap rather than glyph-to-glyph). The "units" band reaches
-    # ~260 because the units glyph in some NSDL CAS variants starts at
-    # x≈225 and right-aligns; without the wider window the units cell
-    # falls into the inter-column gap and reads as 0.
-    cols = (
-        ("isin_ucc", 15, 75),
-        ("name", 75, 150),
-        ("folio", 150, 200),
-        ("units", 200, 260),
-        ("avg_cost", 260, 310),
-        ("total_cost", 310, 375),
-        ("current_nav", 375, 425),
-        ("current_value", 425, 480),
-        ("pnl", 480, 555),
-        ("returns", 555, 600),
-    )
-
-    def assign(self, cell: Cell) -> Optional[str]:
-        for key, lo, hi in self.cols:
-            if lo <= cell.x_left < hi:
-                return key
-        return None
-
-
-_MF_HOLDINGS = _MFHoldingsCols()
 
 
 # --- column anchors for the summary Corporate-Bonds table ---
@@ -268,6 +240,7 @@ def parse_nsdl(
     cur_account: Optional[DematAccount] = None
     cur_mode: Optional[str] = None
     cur_section: Optional[str] = None
+    parse_warnings: List[str] = []
 
     i = 0
     while i < len(page_blocks):
@@ -335,7 +308,7 @@ def parse_nsdl(
             if mf:
                 cur_account.mutual_funds.append(mf)
         elif cur_mode == "mf_holdings":
-            mf = _parse_mf_holdings_row(b)
+            mf = _parse_mf_holdings_row(b, parse_warnings)
             if mf:
                 cur_account.mutual_funds.append(mf)
         elif cur_mode == "bonds_summary":
@@ -357,6 +330,7 @@ def parse_nsdl(
             _atoms=atoms,
         ),
         file_type=file_type,
+        parse_warnings=parse_warnings,
     )
 
 
@@ -658,12 +632,23 @@ def _parse_equity_row(block: Block, detailed: bool = False) -> Optional[Equity]:
     numerics = [c.text.strip() for c in block.cells[2:] if _looks_numeric(c.text)]
     if len(numerics) < 3:
         return None
-    if detailed or len(numerics) >= 5:
-        num_shares = _to_decimal(numerics[0])
-    else:
-        num_shares = _to_decimal(numerics[-3])
     price = _to_decimal(numerics[-2])
     value = _to_decimal(numerics[-1])
+    if detailed or len(numerics) >= 9:
+        # CDSL / extended detailed table: current_bal is the first numeric.
+        num_shares = _to_decimal(numerics[0])
+    elif len(numerics) == 4:
+        # Classic NSDL summary: face_value, num_shares, price, value.
+        num_shares = _to_decimal(numerics[-3])
+    else:
+        # Pledged / sub-balance rows print extra leading numerics (the
+        # pledged sub-amount and sometimes duplicate share counts) before
+        # price and value — pick the share count that closes
+        # ``num_shares * price ~= value``.
+        share_candidates = [_to_decimal(n) for n in numerics[:-2]]
+        num_shares = _pick_balance_closing(share_candidates, price, value)
+    if num_shares > 0 and value > 0 and not _mf_holdings_value_closes(num_shares, price, value):
+        price = value / num_shares
 
     return Equity(
         name=name_cell,
@@ -688,9 +673,22 @@ def _parse_summary_mf_row(block: Block) -> Optional[MutualFund]:
     numerics = [c.text.strip() for c in block.cells[2:] if _looks_numeric(c.text)]
     if len(numerics) < 3:
         return None
-    balance = _to_decimal(numerics[0])
-    nav = _to_decimal(numerics[1])
-    value = _to_decimal(numerics[2])
+    # The summary MF table prints units, NAV, value in that order, so NAV
+    # and value are always the trailing two numerics. A pledged holding
+    # prints an extra leading numeric — the total balance *and* the "of
+    # which pledged" sub-amount — and the two are not in a fixed order
+    # across statements. Pick the balance arithmetically: the unit
+    # quantity that closes ``balance * nav ~= value`` (see
+    # `_pick_balance_closing`), not by position.
+    nav = _to_decimal(numerics[-2])
+    value = _to_decimal(numerics[-1])
+    unit_candidates = [_to_decimal(n) for n in numerics[:-2]]
+    balance = _pick_balance_closing(unit_candidates, nav, value)
+    # If NAV was mis-captured but balance and value are trustworthy (both
+    # close nothing), recover it from the identity. Mirrors the detailed
+    # holdings path.
+    if balance > 0 and value > 0 and not _mf_holdings_value_closes(balance, nav, value):
+        nav = value / balance
     return MutualFund(
         name=name,
         isin=isin,
@@ -703,61 +701,397 @@ def _parse_summary_mf_row(block: Block) -> Optional[MutualFund]:
 # --- detailed MF Holdings row ---
 
 
-def _parse_mf_holdings_row(block: Block) -> Optional[MutualFund]:
-    """Detailed holdings row: ISIN, UCC, scheme name, folio, 7 numerics.
-    Cells map to columns by x-position. Out-of-band cells (e.g., the
-    lone UCC `8` PDFium renders at the units column's x position) are
-    flagged as anomalies and folded into the UCC field if missing."""
+def _rel_close(a: Decimal, b: Decimal, rel: Decimal = Decimal("0.005")) -> bool:
+    if b == 0:
+        return abs(a) <= Decimal("0.01")
+    return abs(a - b) / abs(b) <= rel
+
+
+def _isin_cell_index(block: Block) -> Optional[int]:
+    for i, cell in enumerate(block.cells):
+        first = cell.text.split("\n", 1)[0].strip()
+        if INF_ISIN_RE.match(first):
+            return i
+    return None
+
+
+def _is_folio_token(text: str) -> bool:
+    t = text.strip().replace(",", "")
+    if not t:
+        return False
+    if FOLIO_TAIL_RE.fullmatch(t):
+        return True
+    return bool(re.fullmatch(r"\d+", t) and len(t) >= 4)
+
+
+def _mf_holdings_value_closes(balance: Decimal, nav: Decimal, value: Decimal) -> bool:
+    if balance <= 0 or nav <= 0 or value <= 0:
+        return False
+    derived = balance * nav
+    tol = max(Decimal("0.01"), abs(value) * Decimal("0.005"))
+    return abs(derived - value) <= tol
+
+
+def _pick_balance_closing(candidates: List[Decimal], nav: Decimal, value: Decimal) -> Decimal:
+    """Pick the true unit balance from several candidates.
+
+    A pledged holding prints both the total balance and the "of which
+    pledged" sub-amount; only one of them satisfies
+    ``balance * nav ~= value``. Prefer that candidate; fall back to the
+    largest positive amount (the total is never smaller than a pledged
+    sub-amount), or zero if there is nothing to choose from.
+    """
+    if not candidates:
+        return Decimal(0)
+    positives = [c for c in candidates if c > 0] or list(candidates)
+    if nav > 0 and value > 0:
+        closed = [c for c in positives if _mf_holdings_value_closes(c, nav, value)]
+        if len(closed) == 1:
+            return closed[0]
+    return max(positives)
+
+
+def _pick_mf_holdings_value(
+    balance: Decimal,
+    nav: Decimal,
+    total_cost: Optional[Decimal],
+    value_candidates: List[Decimal],
+) -> Decimal:
+    """Choose the market-value cell when the value band captured extras.
+
+    Some rows render the market value twice — a full lakh-formatted
+    amount at a lower x and a truncated fragment at a higher x — and
+    occasionally echo total-cost near x≈428. Drop near-total-cost
+    echoes first, then prefer the candidate that closes ``balance*nav``,
+    otherwise the largest remaining amount.
+    """
+    if not value_candidates:
+        return Decimal(0)
+    if len(value_candidates) == 1:
+        return value_candidates[0]
+
+    candidates = list(value_candidates)
+    positives = [v for v in candidates if v > 0]
+    if positives:
+        candidates = positives
+
+    if total_cost and total_cost > 0 and len(candidates) > 1:
+        candidates = [
+            v
+            for v in candidates
+            if abs(v - total_cost) / total_cost > ECHO_REL_EPS
+            or (balance > 0 and nav > 0 and _mf_holdings_value_closes(balance, nav, v))
+        ]
+        if not candidates:
+            candidates = positives or list(value_candidates)
+
+    if balance > 0 and nav > 0:
+        closed = [v for v in candidates if _mf_holdings_value_closes(balance, nav, v)]
+        if len(closed) == 1:
+            return closed[0]
+
+    return max(candidates)
+
+
+def _partition_mf_holdings_row(block: Block) -> Optional[dict]:
+    """Split a detailed MF Holdings row into identity fields and a numeric tail."""
     if not block.cells:
         return None
-    by_col: Dict[str, Cell] = {}
-    anomalies: List[Cell] = []
-    for cell in block.cells:
-        key = _MF_HOLDINGS.assign(cell)
-        if key is None or key in by_col:
-            anomalies.append(cell)
-        else:
-            by_col[key] = cell
+    isin_idx = _isin_cell_index(block)
+    if isin_idx is None:
+        return None
 
-    if "isin_ucc" not in by_col:
-        return None
-    isin_cell = by_col["isin_ucc"].text
-    lines = [ln.strip() for ln in isin_cell.split("\n") if ln.strip()]
-    if not lines or not INF_ISIN_RE.match(lines[0]):
-        return None
+    isin_cell = block.cells[isin_idx]
+    lines = [ln.strip() for ln in isin_cell.text.split("\n") if ln.strip()]
     isin = lines[0]
     ucc: Optional[str] = lines[1] if len(lines) > 1 else None
-
-    PLACEHOLDER_UCCS = {"NOT AVAILABLE", "NA", "N.A.", ""}
     needs_ucc = ucc is None or ucc.upper() in PLACEHOLDER_UCCS
-    if anomalies and needs_ucc:
-        for a in anomalies:
-            t = a.text.strip()
-            if t and len(t) <= 32:
-                ucc = t
+
+    name: Optional[str] = None
+    if isin_idx > 0:
+        name_parts = [
+            c.text.replace("\n", " ").strip() for c in block.cells[:isin_idx] if c.text.strip()
+        ]
+        if name_parts:
+            name = " ".join(name_parts) or None
+
+    idx = isin_idx + 1
+    if name is None and idx < len(block.cells):
+        cell = block.cells[idx]
+        if not _is_folio_token(cell.text) and not _looks_numeric(cell.text):
+            name = cell.text.replace("\n", " ").strip() or None
+            idx += 1
+
+    folio: Optional[str] = None
+    if idx < len(block.cells) and _is_folio_token(block.cells[idx].text):
+        folio = block.cells[idx].text.strip().replace(",", "")
+        idx += 1
+        if idx < len(block.cells):
+            folio_tail = block.cells[idx].text.strip()
+            if FOLIO_TAIL_RE.fullmatch(folio_tail):
+                folio = folio + folio_tail
+                idx += 1
+
+    # Skip distributor / label cells (DIRECT, ARN, etc.) before the units column.
+    while idx < len(block.cells) and not _looks_numeric(block.cells[idx].text):
+        idx += 1
+
+    cluster_cells: List[Cell] = []
+    cluster_start_x: Optional[float] = None
+    while idx < len(block.cells):
+        cell = block.cells[idx]
+        if not _looks_numeric(cell.text):
+            break
+        if not cluster_cells:
+            cluster_start_x = cell.x_left
+            cluster_cells.append(cell)
+            idx += 1
+            continue
+        t = cell.text.strip()
+        if abs(cell.x_left - cluster_start_x) <= UNITS_CLUSTER_X_EPS and t and len(t) <= 2:
+            cluster_cells.append(cell)
+            idx += 1
+        else:
+            break
+
+    balance = Decimal(0)
+    if cluster_cells:
+        amounts = [(_to_decimal(c.text), c) for c in cluster_cells]
+        balance = max(amt for amt, _ in amounts)
+        if needs_ucc and len(amounts) > 1:
+            for amt, cell in amounts:
+                t = cell.text.strip()
+                if t and len(t) <= 2 and amt < balance:
+                    ucc = t
+                    break
+        elif len(amounts) == 1:
+            balance = amounts[0][0]
+
+    tail: List[Tuple[float, Decimal]] = []
+    for cell in block.cells[idx:]:
+        if _looks_numeric(cell.text):
+            tail.append((cell.x_left, _to_decimal(cell.text)))
+    tail.sort(key=lambda item: item[0])
+
+    return {
+        "isin": isin,
+        "ucc": ucc,
+        "name": name,
+        "folio": folio,
+        "balance": balance,
+        "tail": tail,
+    }
+
+
+def _closing_nav_value_pairs(
+    balance: Decimal, tail: List[Tuple[float, Decimal]]
+) -> List[Tuple[int, Decimal, Decimal]]:
+    """Adjacent closing pairs plus nav…invested…value gap (one cell between)."""
+    pairs: List[Tuple[int, Decimal, Decimal]] = []
+    for i in range(len(tail) - 1):
+        nav_c, val_c = tail[i][1], tail[i + 1][1]
+        if _mf_holdings_value_closes(balance, nav_c, val_c):
+            pairs.append((i, nav_c, val_c))
+    for i in range(len(tail) - 2):
+        nav_c, val_c = tail[i][1], tail[i + 2][1]
+        if _mf_holdings_value_closes(balance, nav_c, val_c):
+            pairs.append((i, nav_c, val_c))
+    return pairs
+
+
+def _is_truncated_value_fragment(r: Decimal, value: Decimal) -> bool:
+    """True when ``r`` is ``value`` with its leading digit group(s) clipped.
+
+    A lakh value is sometimes printed beside a truncated copy of itself
+    (``20,77,622`` next to ``77,622``). The fragment shares value's low-order
+    digits, so ``value - r`` is an exact multiple of ``10 ** digits(r)`` — the
+    dropped high-order part. The only threshold is structural: the fragment
+    must have >= 4 integer digits (a rupee amount, not a small pnl / return %),
+    which keeps genuine single/double-digit returns from being matched.
+    """
+    if r <= 0 or r >= value:
+        return False
+    digits = len(str(int(r)))
+    if digits < 4:
+        return False
+    return (value - r) % (Decimal(10) ** digits) == 0
+
+
+def _drop_value_fragments(
+    remaining: List[Decimal],
+    locked_value: Decimal,
+    total_cost: Optional[Decimal] = None,
+) -> List[Decimal]:
+    """Drop truncated lakh fragments left in the tail after value lock.
+
+    A number matching the pnl identity (``value - total_cost``) is always kept;
+    otherwise it is dropped only if it is a truncated suffix of ``value``.
+    """
+    if locked_value <= 0:
+        return remaining
+    expected_pnl = locked_value - total_cost if total_cost and total_cost > 0 else None
+    return [
+        r
+        for r in remaining
+        if (expected_pnl is not None and _rel_close(r, expected_pnl))
+        or not _is_truncated_value_fragment(r, locked_value)
+    ]
+
+
+def _resolve_mf_holdings_tail(
+    balance: Decimal,
+    tail: List[Tuple[float, Decimal]],
+    isin: str,
+    parse_warnings: List[str],
+) -> Tuple[
+    Decimal, Decimal, Optional[Decimal], Optional[Decimal], Optional[Decimal], Optional[Decimal]
+]:
+    """Return nav, value, avg_cost, total_cost, pnl, returns from the numeric tail."""
+    nav = value = Decimal(0)
+    nav_idx: Optional[int] = None
+    val_idx: Optional[int] = None
+
+    if not tail:
+        return nav, value, None, None, None, None
+
+    pairs = _closing_nav_value_pairs(balance, tail)
+    if pairs:
+        # Rightmost closing pair: the spurious (avg_cost, total_cost) pair always
+        # sits leftmost, so the highest index is the real (nav, value).
+        nav_idx, nav, value = max(pairs, key=lambda p: p[0])
+        val_idx = nav_idx + 1
+        for j in range(nav_idx + 1, len(tail)):
+            if tail[j][1] == value:
+                val_idx = j
                 break
+    else:
+        val_idx = max(range(len(tail)), key=lambda i: tail[i][1])
+        value = tail[val_idx][1]
+        nav = value / balance if balance > 0 else Decimal(0)
+        parse_warnings.append(
+            f"MF holdings {isin}: no closing nav/value pair; inferred from max tail"
+        )
 
-    name = by_col["name"].text.replace("\n", " ").strip() if "name" in by_col else None
-    folio = by_col["folio"].text.strip() if "folio" in by_col else None
+    if nav_idx is not None and nav_idx < len(tail):
+        cost_tail = tail[:nav_idx]
+    else:
+        cost_tail = tail[: min(2, val_idx or 0)]
 
-    balance = _to_decimal(by_col.get("units").text if "units" in by_col else None)
-    avg_cost = _opt_decimal(by_col.get("avg_cost").text if "avg_cost" in by_col else None)
-    total_cost = _opt_decimal(by_col.get("total_cost").text if "total_cost" in by_col else None)
-    nav = _to_decimal(by_col.get("current_nav").text if "current_nav" in by_col else None)
-    value = _to_decimal(by_col.get("current_value").text if "current_value" in by_col else None)
-    pnl = _opt_decimal(by_col.get("pnl").text if "pnl" in by_col else None)
-    ret = _opt_decimal(by_col.get("returns").text if "returns" in by_col else None)
+    avg_cost: Optional[Decimal] = None
+    total_cost: Optional[Decimal] = None
+    if len(cost_tail) >= 2:
+        avg_cost, total_cost = cost_tail[-2][1], cost_tail[-1][1]
+    elif len(cost_tail) == 1:
+        total_cost = cost_tail[0][1]
+    if (
+        nav_idx is not None
+        and val_idx is not None
+        and val_idx == nav_idx + 2
+        and val_idx < len(tail)
+    ):
+        total_cost = tail[nav_idx + 1][1]
+
+    value_candidates = [value]
+    if val_idx is not None:
+        val_x = tail[val_idx][0]
+        for j, (x_c, v_c) in enumerate(tail):
+            if j != val_idx and abs(x_c - val_x) <= VALUE_COL_X_EPS:
+                value_candidates.append(v_c)
+    value = _pick_mf_holdings_value(balance, nav, total_cost, value_candidates)
+    if balance > 0 and value > 0 and not _mf_holdings_value_closes(balance, nav, value):
+        nav = value / balance
+
+    consumed: set[int] = set()
+    if nav_idx is not None:
+        consumed.update(range(nav_idx + 1))
+        consumed.add(val_idx)
+        if val_idx == nav_idx + 2:
+            consumed.add(nav_idx + 1)
+    elif val_idx is not None:
+        consumed.update(range(min(2, val_idx)))
+        consumed.add(val_idx)
+    if val_idx is not None:
+        val_x = tail[val_idx][0]
+        for j, (x_c, v_c) in enumerate(tail):
+            if j in consumed:
+                continue
+            if abs(x_c - val_x) <= VALUE_COL_X_EPS and v_c in value_candidates and v_c != value:
+                consumed.add(j)
+
+    remaining = [tail[j][1] for j in range(len(tail)) if j not in consumed]
+    remaining = [r for r in remaining if r != 0]
+    remaining = _drop_value_fragments(remaining, value, total_cost)
+
+    pnl: Optional[Decimal] = None
+    ret: Optional[Decimal] = None
+    if len(remaining) == 1:
+        r = remaining[0]
+        if total_cost and total_cost > 0:
+            expected_pnl = value - total_cost
+            if _rel_close(r, expected_pnl):
+                pnl = r
+            # Last-resort tie-break for a single trailing numeric that does NOT
+            # satisfy the pnl identity: a small magnitude (< 50) reads as a
+            # return %, anything larger as a rupee pnl. Magic threshold, used
+            # only when the identity is inconclusive — pnl/returns are soft
+            # fields, so a rare misclassification here is non-fatal.
+            elif abs(r) < Decimal("50"):
+                ret = r
+            else:
+                pnl = r
+        else:
+            pnl = r
+    elif len(remaining) >= 2:
+        if total_cost and total_cost > 0:
+            expected_pnl = value - total_cost
+            for r in remaining:
+                if _rel_close(r, expected_pnl):
+                    pnl = r
+                    break
+            others = [r for r in remaining if r != pnl]
+            if pnl is not None and others:
+                ret = others[-1]
+            elif pnl is None:
+                pnl = min(remaining, key=lambda r: abs(r - expected_pnl))
+                others = [r for r in remaining if r != pnl]
+                ret = others[-1] if others else None
+        else:
+            pnl, ret = remaining[0], remaining[-1]
+
+    return nav, value, avg_cost, total_cost, pnl, ret
+
+
+def _parse_mf_holdings_row(
+    block: Block,
+    parse_warnings: Optional[List[str]] = None,
+) -> Optional[MutualFund]:
+    """Detailed holdings row: ISIN, UCC, scheme name, folio, numeric tail.
+
+    Columns resolve by ISIN index, token format, and arithmetic — not
+    hardcoded x-bands. A lone UCC digit co-located at the units position
+    is folded into ``ucc`` when the ISIN cell carried a placeholder."""
+    part = _partition_mf_holdings_row(block)
+    if part is None:
+        return None
+
+    warnings = parse_warnings if parse_warnings is not None else []
+    nav, value, avg_cost, total_cost, pnl, ret = _resolve_mf_holdings_tail(
+        part["balance"],
+        part["tail"],
+        part["isin"],
+        warnings,
+    )
 
     return MutualFund(
-        name=name,
-        isin=isin,
-        balance=balance,
+        name=part["name"],
+        isin=part["isin"],
+        balance=part["balance"],
         nav=nav,
         value=value,
         avg_cost=avg_cost,
         total_cost=total_cost,
-        ucc=ucc,
-        folio=folio,
+        ucc=part["ucc"],
+        folio=part["folio"],
         pnl=pnl,
         **{"return": ret},
     )

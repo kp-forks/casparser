@@ -489,6 +489,14 @@
     "investor_info": {
       "$ref": "#/$defs/InvestorInfo"
     },
+    "parse_warnings": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Parse Warnings",
+      "type": "array"
+    },
     "statement_period": {
       "$ref": "#/$defs/StatementPeriod"
     }

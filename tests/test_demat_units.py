@@ -425,6 +425,24 @@ class TestNSDLHelpers:
         assert eq.price == Decimal("450.50")
         assert eq.value == Decimal("45050.00")
 
+    def test_parse_equity_row_pledged_picks_closing_shares(self):
+        """Pledged equity rows print a sub-amount and duplicate share counts
+        before price/value — pick the count that closes shares*price~=value."""
+        block = _block(
+            _cell("INE552Z01027\nABDL.NSE"),
+            _cell("ALLIED BLENDERS AND DISTILLERS LIMITED"),
+            _cell("2.00"),  # pledged sub-amount
+            _cell("300"),
+            _cell("300"),
+            _cell("558.30"),
+            _cell("1,67,490.00"),
+        )
+        eq = nsdl_p._parse_equity_row(block, detailed=False)
+        assert eq is not None
+        assert eq.num_shares == Decimal("300")
+        assert eq.price == Decimal("558.30")
+        assert eq.value == Decimal("167490.00")
+
     def test_parse_equity_row_rejects_no_isin(self):
         block = _block(_cell("not-an-isin"), _cell("name"), _cell("1"), _cell("2"), _cell("3"))
         assert nsdl_p._parse_equity_row(block) is None
@@ -451,6 +469,42 @@ class TestNSDLHelpers:
         block = _block(_cell("not-an-isin"), _cell("name"))
         assert nsdl_p._parse_summary_mf_row(block) is None
 
+    def test_parse_summary_mf_row_pledged_picks_closing_balance(self):
+        """A pledged holding prints two unit numerics — the total balance
+        and the 'of which pledged' sub-amount — before NAV and value, in no
+        fixed order. The parser must pick the balance that closes
+        ``balance * nav ~= value``, not the leading numeric. Mirrors the
+        AXIS MULTICAP pledged row that used to read balance=5,628 (the
+        pledged sub-amount) instead of 7,589.734 (the total)."""
+        block = _block(
+            _cell("INF846K016E3"),
+            _cell("AXIS MULTICAP FUND-REGULAR PLAN GROWTH"),
+            _cell("5,628.000"),  # 'of which pledged' sub-amount (leads)
+            _cell("7,589.734"),  # actual total balance
+            _cell("18.20"),  # NAV
+            _cell("1,38,133.15"),  # value (7,589.734 * 18.20)
+        )
+        mf = nsdl_p._parse_summary_mf_row(block)
+        assert mf is not None
+        assert mf.balance == Decimal("7589.734")
+        assert mf.nav == Decimal("18.20")
+        assert mf.value == Decimal("138133.15")
+
+    def test_pick_balance_closing(self):
+        nav, value = Decimal("18.20"), Decimal("138133.15")
+        # Picks the candidate that closes balance * nav ~= value.
+        assert nsdl_p._pick_balance_closing(
+            [Decimal("5628.000"), Decimal("7589.734")], nav, value
+        ) == Decimal("7589.734")
+        # Single candidate is returned as-is.
+        assert nsdl_p._pick_balance_closing([Decimal("100.001")], nav, value) == Decimal("100.001")
+        # No candidate closes -> largest positive fallback.
+        assert nsdl_p._pick_balance_closing(
+            [Decimal("10"), Decimal("20")], Decimal("0"), Decimal("0")
+        ) == Decimal("20")
+        # Empty -> zero.
+        assert nsdl_p._pick_balance_closing([], nav, value) == Decimal(0)
+
     def test_parse_mf_holdings_row_with_misplaced_ucc(self):
         """The NSDL MF Holdings table sometimes renders the UCC as a
         lone digit (`8`) at the units column's x-position. The parser
@@ -473,9 +527,193 @@ class TestNSDLHelpers:
         assert mf.isin == "INF000A01003"
         assert mf.folio == "26777337"
         assert mf.balance == Decimal("89935.20")
-        # The misplaced `8` is folded into UCC since the ISIN cell's
-        # UCC line was the placeholder `NOT AVAILABLE`.
         assert mf.ucc == "8"
+        assert mf.nav == Decimal("29.3146")
+        assert mf.value == Decimal("2636414.65")
+        assert mf.pnl == Decimal("136414.65")
+        assert mf.return_ == Decimal("8.61")
+
+    def test_parse_mf_holdings_row_right_shifted_layout(self):
+        """Same row as the misplaced-UCC fixture, shifted ~33px right
+        (nav≈426, value≈484, pnl≈555) — the trigger-statement geometry."""
+        block = _block(
+            _cell("INF000A01003\nNOT AVAILABLE", 20.0, 75.0),
+            _cell("ICICI Prudential\nCorporate Bond", 80.0, 145.0),
+            _cell("26777337", 167.0, 198.0),
+            _cell("89,935.20", 204.0, 235.0),
+            _cell("8", 231.9, 235.2),
+            _cell("27.7978", 313.0, 338.0),
+            _cell("25,00,000.00", 353.0, 393.0),
+            _cell("29.3146", 426.0, 451.0),
+            _cell("26,36,414.65", 484.0, 524.0),
+            _cell("1,36,414.65", 555.0, 591.0),
+            _cell("8.61", 630.0, 643.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.nav == Decimal("29.3146")
+        assert mf.value == Decimal("2636414.65")
+        assert mf.pnl == Decimal("136414.65")
+        assert mf.return_ == Decimal("8.61")
+
+    def test_parse_mf_holdings_row_reduced_columns(self):
+        """Row with no avg/total cost — only units, nav, value."""
+        block = _block(
+            _cell("INF000A01004", 20.0, 75.0),
+            _cell("Liquid Fund", 80.0, 145.0),
+            _cell("12345678", 167.0, 198.0),
+            _cell("100.001", 204.0, 235.0),
+            _cell("1000.00", 393.0, 418.0),
+            _cell("100,000.00", 433.0, 473.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.balance == Decimal("100.001")
+        assert mf.nav == Decimal("1000.00")
+        assert mf.value == Decimal("100000.00")
+        assert mf.avg_cost is None
+        assert mf.total_cost is None
+        assert mf.pnl is None
+        assert mf.return_ is None
+
+    def test_parse_mf_holdings_row_pnl_without_returns(self):
+        """Live INF2JJD01169 shape: tail ends with pnl only, no returns %."""
+        block = _block(
+            _cell("INF2JJD01169", 20.0, 75.0),
+            _cell("Some Scheme", 80.0, 145.0),
+            _cell("6653121493", 167.0, 198.0),
+            _cell("194.410", 204.0, 235.0),
+            _cell("10.2875", 280.0, 305.0),
+            _cell("2000", 320.0, 360.0),
+            _cell("10.2280", 393.0, 418.0),
+            _cell("1988.43", 433.0, 473.0),
+            _cell("-11.57", 486.0, 522.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.nav == Decimal("10.2280")
+        assert mf.value == Decimal("1988.43")
+        assert mf.total_cost == Decimal("2000")
+        assert mf.pnl == Decimal("-11.57")
+        assert mf.return_ is None
+
+    def test_parse_mf_holdings_row_near_par_value(self):
+        """Near-par market value (0.58% below cost) must not be dropped."""
+        block = _block(
+            _cell("INF2JJD01169", 20.0, 75.0),
+            _cell("Near Par Fund", 80.0, 145.0),
+            _cell("6653121493", 167.0, 198.0),
+            _cell("194.410", 204.0, 235.0),
+            _cell("10.2875", 280.0, 305.0),
+            _cell("2000", 320.0, 360.0),
+            _cell("10.2280", 393.0, 418.0),
+            _cell("1988.43", 433.0, 473.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.value == Decimal("1988.43")
+        assert mf.total_cost == Decimal("2000")
+
+    def test_parse_mf_holdings_row_inf090i01wx1_near_par(self):
+        """Real 1782131089 geometry: near-par value must not trigger secondary."""
+        block = _block(
+            _cell("INF090I01WX1\nFIMCFGP", 20.6, 75.0),
+            _cell("Franklin India Multi\nCap Fund - Growth", 82.3, 145.0),
+            _cell("34463878", 165.3, 198.0),
+            _cell("999.950", 236.3, 235.0),
+            _cell("10.0005", 298.9, 305.0),
+            _cell("10,000.00", 361.1, 360.0),
+            _cell("10.2603", 426.2, 451.0),
+            _cell("10,259.79", 482.5, 524.0),
+            _cell("259.79", 553.8, 574.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.balance == Decimal("999.950")
+        assert mf.nav == Decimal("10.2603")
+        assert mf.value == Decimal("10259.79")
+        assert mf.total_cost == Decimal("10000.00")
+        assert mf.pnl == Decimal("259.79")
+        assert mf.return_ is None
+
+    def test_parse_mf_holdings_row_inf179k01cr2(self):
+        """Real 1782131089 geometry: lakh-style value fragment must not become value."""
+        block = _block(
+            _cell("INF179K01CR2\nMFHDFC0078", 20.5, 75.0),
+            _cell("HDFC Mid Cap\nFund - Regular Plan\n- Growth", 82.2, 145.0),
+            _cell("31627597", 165.3, 198.0),
+            _cell("300.762", 236.3, 235.0),
+            _cell("199.4933", 297.0, 305.0),
+            _cell("60,000.00", 360.6, 360.0),
+            _cell("199.8970", 424.3, 451.0),
+            _cell("60,121.42", 482.0, 524.0),
+            _cell("121.42", 554.4, 574.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.nav == Decimal("199.8970")
+        assert mf.value == Decimal("60121.42")
+        assert mf.pnl == Decimal("121.42")
+
+    def test_parse_mf_holdings_row_inf194kb1aj8_small_balance(self):
+        """Real 1782131089 geometry: spurious (avg,tc) pair left of true nav/value."""
+        block = _block(
+            _cell("INF194KB1AJ8\nNOT AVAILABLE", 20.5, 75.0),
+            _cell("Bandhan Small Cap\nFund-Regular Plan Growth", 82.3, 145.0),
+            _cell("8841793", 167.2, 198.0),
+            _cell("62.931", 240.1, 235.0),
+            _cell("47.6713", 298.3, 305.0),
+            _cell("3,000.00", 362.6, 360.0),
+            _cell("47.9400", 425.6, 451.0),
+            _cell("3,016.91", 484.0, 524.0),
+            _cell("16.91", 558.3, 574.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.balance == Decimal("62.931")
+        assert mf.nav == Decimal("47.9400")
+        assert mf.value == Decimal("3016.91")
+        assert mf.pnl == Decimal("16.91")
+
+    def test_parse_mf_holdings_row_lakh_value_fragment(self):
+        """Full lakh value plus truncated fragment — picker keeps the full amount."""
+        block = _block(
+            _cell("INF740KA1RB9", 20.0, 75.0),
+            _cell("Lakh Fragment Fund", 80.0, 145.0),
+            _cell("12345678", 167.0, 198.0),
+            _cell("13,619.00", 204.0, 235.0),
+            _cell("100.00", 280.0, 305.0),
+            _cell("13,619.00", 320.0, 360.0),
+            _cell("152.70", 393.0, 418.0),
+            _cell("20,77,622.00", 433.0, 473.0),
+            _cell("77,622.00", 492.0, 522.0),
+            _cell("258.00", 557.0, 574.0),
+            _cell("7.49", 600.0, 613.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.value == Decimal("2077622.00")
+        assert mf.pnl == Decimal("258.00")
+        assert mf.return_ == Decimal("7.49")
+
+    def test_parse_mf_holdings_row_returns_zero_placeholder(self):
+        """A trailing 0.000 returns placeholder is ignored."""
+        block = _block(
+            _cell("INF000A01005", 20.0, 75.0),
+            _cell("Zero Return Fund", 80.0, 145.0),
+            _cell("12345678", 167.0, 198.0),
+            _cell("100", 204.0, 235.0),
+            _cell("10", 280.0, 305.0),
+            _cell("1000", 320.0, 360.0),
+            _cell("11", 393.0, 418.0),
+            _cell("1100", 433.0, 473.0),
+            _cell("100", 486.0, 522.0),
+            _cell("0.000", 561.0, 574.0),
+        )
+        mf = nsdl_p._parse_mf_holdings_row(block)
+        assert mf is not None
+        assert mf.pnl == Decimal("100")
+        assert mf.return_ is None
 
     def test_parse_mf_holdings_row_rejects_no_isin(self):
         block = _block(_cell("not-an-isin", 20.0, 75.0))
