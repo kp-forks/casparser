@@ -142,28 +142,14 @@
           "title": "Amfi"
         },
         "close": {
-          "anyOf": [
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-              "type": "string"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Close"
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Close",
+          "type": "string"
         },
         "close_calculated": {
-          "anyOf": [
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-              "type": "string"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Close Calculated"
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Close Calculated",
+          "type": "string"
         },
         "isin": {
           "anyOf": [
@@ -186,16 +172,9 @@
           "type": "array"
         },
         "open": {
-          "anyOf": [
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-              "type": "string"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Open"
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Open",
+          "type": "string"
         },
         "rta": {
           "title": "Rta",
@@ -255,9 +234,6 @@
               "type": "string"
             },
             {
-              "type": "number"
-            },
-            {
               "type": "null"
             }
           ],
@@ -277,28 +253,14 @@
           "title": "Date"
         },
         "nav": {
-          "anyOf": [
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-              "type": "string"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Nav"
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Nav",
+          "type": "string"
         },
         "value": {
-          "anyOf": [
-            {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-              "type": "string"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "title": "Value"
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Value",
+          "type": "string"
         }
       },
       "required": [
@@ -337,9 +299,6 @@
               "type": "string"
             },
             {
-              "type": "number"
-            },
-            {
               "type": "null"
             }
           ],
@@ -351,9 +310,6 @@
             {
               "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
               "type": "string"
-            },
-            {
-              "type": "number"
             },
             {
               "type": "null"
@@ -385,9 +341,6 @@
               "type": "string"
             },
             {
-              "type": "number"
-            },
-            {
               "type": "null"
             }
           ],
@@ -413,9 +366,6 @@
               "type": "string"
             },
             {
-              "type": "number"
-            },
-            {
               "type": "null"
             }
           ],
@@ -430,9 +380,6 @@
             {
               "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
               "type": "string"
-            },
-            {
-              "type": "number"
             },
             {
               "type": "null"

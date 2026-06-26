@@ -27,26 +27,48 @@ class TransactionData(BaseModel):
 
     date: Union[date, str]
     description: str
-    amount: Union[Decimal, float, None] = None
-    units: Union[Decimal, float, None] = None
-    nav: Union[Decimal, float, None] = None
-    balance: Union[Decimal, float, None] = None
+    amount: Optional[Decimal] = None
+    units: Optional[Decimal] = None
+    nav: Optional[Decimal] = None
+    balance: Optional[Decimal] = None
     type: TransactionType
-    dividend_rate: Union[Decimal, float, None] = None
+    dividend_rate: Optional[Decimal] = None
     # For GIFT_IN / GIFT_OUT transfers: the *counterparty* folio named in
     # the description (the destination for a gift-out, the source for a
     # gift-in). Lets a donor's statement be linked to the donee's across
     # two CAS files. None for all other transaction types.
     gift_folio: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def fix_float(cls, data: dict):
+        for k, v in data.items():
+            try:
+                if issubclass(Decimal, cls.__annotations__[k]) and isinstance(v, str):
+                    data[k] = v.replace(",", "_").replace("_", "")
+            except TypeError:
+                pass
+        return data
+
 
 class SchemeValuation(BaseModel):
     """Scheme valuation as of a given date."""
 
     date: Union[date, str]
-    nav: Union[Decimal, float]
-    cost: Union[Decimal, float, None] = None
-    value: Union[Decimal, float]
+    nav: Decimal
+    cost: Optional[Decimal] = None
+    value: Decimal
+
+    @model_validator(mode="before")
+    @classmethod
+    def fix_float(cls, data: dict):
+        for k, v in data.items():
+            try:
+                if issubclass(Decimal, cls.__annotations__[k]) and isinstance(v, str):
+                    data[k] = v.replace(",", "_").replace("_", "")
+            except TypeError:
+                pass
+        return data
 
 
 class Scheme(BaseModel):
@@ -60,11 +82,22 @@ class Scheme(BaseModel):
     isin: Optional[str] = None
     amfi: Optional[str] = None
     nominees: List[str] = []
-    open: Union[Decimal, float]
-    close: Union[Decimal, float]
-    close_calculated: Union[Decimal, float]
+    open: Decimal
+    close: Decimal
+    close_calculated: Decimal
     valuation: SchemeValuation
     transactions: List[TransactionData]
+
+    @model_validator(mode="before")
+    @classmethod
+    def fix_float(cls, data: dict):
+        for k, v in data.items():
+            try:
+                if issubclass(Decimal, cls.__annotations__[k]) and isinstance(v, str):
+                    data[k] = v.replace(",", "_").replace("_", "")
+            except TypeError:
+                pass
+        return data
 
 
 class Folio(BaseModel):

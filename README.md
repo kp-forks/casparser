@@ -406,16 +406,12 @@ CASParser is distributed under the MIT license.
 3. [NSDL Consolidated Account Statement](https://nsdlcas.nsdl.com/)
 4. [CDSL Consolidated Account Statement](https://www.cdslindia.com/Investors/Cas.html)
 
-## Support
+## Support the project
 
-`casparser` is free and maintained in my spare time. Statement formats (CAMS,
-KFintech, NSDL, CDSL) change without notice, and keeping the parsers working
-takes ongoing effort.
+`casparser` is open-source and maintained in spare time. If it saved you time or helped you build something, here are a few ways to help:
 
-If this library saved you time and you'd like to support continued development,
-consider leaving a tip:
+- **Leave a ⭐:** A simple star goes a long way and helps others discover the project.
+- **Contribute:** Found a bug, a missing statement format, or have a suggestion? Issues and pull requests are always welcome.
+- **Sponsor:** If you'd like to support ongoing maintenance with a tip, you can sponsor the project via [GitHub Sponsors](https://github.com/sponsors/codereverser) or [Buy Me A Coffee](https://www.buymeacoffee.com/codereverser).
 
-[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github-sponsors&logoColor=white)](https://github.com/sponsors/codereverser)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/codereverser)
-
-Completely optional — issues and pull requests are always welcome regardless.
+Everything is entirely optional — your feedback, issue reports, and contributions are what keep the project going.
