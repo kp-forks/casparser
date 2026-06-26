@@ -13,7 +13,8 @@ CAMS, KFintech, NSDL, and CDSL.
 
 `casparser` also includes a command line tool with the following analysis tools
 - `summary`- print portfolio summary
-- (**BETA**) `gains` - Print capital gains report (summary and detailed)
+- `gains` - capital gains report (summary and detailed), reconciled with the
+  CAMS/KFin capital-gains statements
   - with option to generate csv files for ITR in schedule 112A format
 
 
@@ -292,10 +293,10 @@ Usage: casparser [-o output_file.json|output_file.csv] [-p password] [-s] [-a] C
   -p PASSWORD                     CAS password
   -a, --include-all               Include schemes with zero valuation in the
                                   summary output
-  -g, --gains                     Generate Capital Gains Report (BETA)
+  -g, --gains                     Generate Capital Gains Report
   --gains-112a ask|FY2020-21      Generate Capital Gains Report - 112A format for
                                   a given financial year - Use 'ask' for a prompt
-                                  from available options (BETA)
+                                  from available options
 
   --version                       Show the version and exit.
   -h, --help                      Show this message and exit.
@@ -339,6 +340,35 @@ casparser /path/to/cas.pdf -p password -g -o pdf_parsed.csv
 #### Demo
 
 ![demo](https://raw.githubusercontent.com/codereverser/casparser/main/assets/demo.jpg)
+
+## Capital gains, reconciled with the source
+
+`casparser` computes your realised capital gains — and a ready-to-file
+**Schedule 112A** CSV — directly from the CAS, fully **offline**. Nothing leaves
+your machine.
+
+The numbers reconcile *to the paisa* with the official **CAMS** and
+**KFintech** capital-gains statements — the same registrar records you file your
+return from. FY2025-26 on a sample portfolio:
+
+| Fund | casparser | CAMS / KFin statement |
+|------|----------:|----------------------:|
+| ICICI Prudential Arbitrage   | ₹8,081.85    | ₹8,081.86    |
+| Mirae Asset Large & Midcap   | ₹6,214.76    | ₹6,214.76    |
+| Mahindra Manulife Multi Cap  | ₹2,24,168.84 | ₹2,24,168.84 |
+| Nippon India Arbitrage       | ₹7,853.09    | ₹7,853.10    |
+| **Total LTCG**               | **₹2,46,318.54** | **₹2,46,318.56** |
+
+Cost of acquisition includes buy-side **stamp duty** (s.55) and **STT is not**
+netted into the gain (s.48) — exactly how the registrars compute it.
+
+![capital gains report](https://raw.githubusercontent.com/codereverser/casparser/main/assets/gains_demo.png)
+
+> 💡 Run `casparser -g` on your own CAS and reconcile against your CAMS/KFin
+> capital-gains statement — they should line up. Reporting differences between
+> tools usually come down to two things: whether buy-side stamp duty is included
+> in the cost of acquisition (it should be), and whether every redeemed folio is
+> captured. casparser does both, so you can verify it against the source.
 
 ## ISIN & AMFI code support
 

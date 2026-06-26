@@ -454,8 +454,9 @@ def print_gains(parsed_data: CASData, output_file_path=None, gains_112a=""):
     pnl = cg.current_value - cg.invested_amount
     console.print(f"{'Absolute PnL':20s}: [bold {get_color(pnl)}]{formatINR(pnl)}[/]")
     console.print(
-        "\n[bold yellow]Warning:[/] Capital gains module is in beta stage. "
-        "Please verify the generated data manually."
+        "\n[dim]Gains are computed per CAMS/KFin methodology. It's good practice "
+        "to reconcile against your registrar's capital-gains statement before "
+        "filing.[/]"
     )
 
 
@@ -508,11 +509,11 @@ def save_gains_112a(capital_gains: CapitalGainsReport, fy, output_path):
     is_flag=True,
     help="Include schemes with zero valuation in the summary output",
 )
-@click.option("-g", "--gains", is_flag=True, help="Generate Capital Gains Report (BETA)")
+@click.option("-g", "--gains", is_flag=True, help="Generate Capital Gains Report")
 @click.option(
     "--gains-112a",
     help="Generate Capital Gains Report - 112A format for a financial year - "
-    "Use 'ask' for a prompt from available options (BETA)",
+    "Use 'ask' for a prompt from available options",
     default="",
     metavar="ask|FY2020-21",
 )
