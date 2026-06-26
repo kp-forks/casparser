@@ -281,6 +281,50 @@ class TestCDSLHelpers:
         # value is consistent with balance * nav
         assert abs(mf.balance * mf.nav - mf.value) <= Decimal("0.01")
 
+    def test_mf_holdings_pnl_identity_full_row(self):
+        """Full distrib row: profit and return% at the tail."""
+        block = _block(
+            _cell("EXFND - Example Fund", 22, 90),
+            _cell("INF000A01001", 192, 230),
+            _cell("12345", 273, 300),
+            _cell("DIRECT", 320, 360),
+            _cell("100.000", 380, 410),
+            _cell("25.0000", 430, 460),
+            _cell("2000.00", 480, 510),
+            _cell("2500.00", 530, 560),
+            _cell("0.10", 570, 590),
+            _cell("0", 600, 620),
+            _cell("500.00", 630, 650),
+            _cell("25.00", 660, 680),
+        )
+        mf = cdsl_p._parse_mf_holdings_row(block, {})
+        assert mf is not None
+        assert mf.pnl == Decimal("500.00")
+        assert mf.return_ == Decimal("25.00")
+
+    def test_mf_holdings_return_only_tail(self):
+        """1684130326 geometry: no printed profit; return% must not land in pnl."""
+        block = _block(
+            _cell("32Z - Aditya Birla Sun Life Corporate Bond Fund - ", 21.5, 90),
+            _cell("INF209K01S38", 112.3, 230),
+            _cell("1040936382", 167.2, 300),
+            _cell("DIRECT", 219.0, 360),
+            _cell("ARN\x02", 222.8, 380),
+            _cell("11.343", 269.4, 410),
+            _cell("95.6053", 299.6, 460),
+            _cell("1,000.00", 348.1, 510),
+            _cell("1,084.45", 398.1, 560),
+            _cell("0", 469.1, 590),
+            _cell(".31", 507.9, 620),
+            _cell("0", 574.1, 650),
+        )
+        mf = cdsl_p._parse_mf_holdings_row(block, {})
+        assert mf is not None
+        assert mf.value == Decimal("1084.45")
+        assert mf.total_cost == Decimal("1000.00")
+        assert mf.pnl is None
+        assert mf.return_ == Decimal("0.31")
+
 
 # ---------------------------------------------------------------- NSDL
 

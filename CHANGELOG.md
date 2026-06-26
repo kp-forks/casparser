@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.2.x
+
+### New
+
+- `NSDLCASData.parse_warnings` — non-fatal warnings for demat holdings whose
+  numbers don't reconcile.
+
+### Fixed
+
+- NSDL demat holdings parsed by arithmetic (`units*nav≈value`) instead of
+  hardcoded pixel columns; fixes wrong nav/value on layout-shifted statements.
+- NSDL equities: same fix (`shares*price≈value`) + pledged sub-rows no longer
+  parsed as separate holdings.
+- CDSL mutual-fund profit/return assigned by `value-cost` identity, not
+  position; fixes return% being reported as profit.
+
+### Changed
+
+- `CapitalGainsReport` is lazy-loaded, keeping `import casparser` lighter.
+
 ## 1.2.1
 
 ### Fixed

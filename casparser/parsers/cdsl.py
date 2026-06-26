@@ -132,6 +132,66 @@ def _looks_numeric(text: str) -> bool:
     return bool(NUMERIC_RE.match(s))
 
 
+def _rel_close(a: Decimal, b: Decimal, rel: Decimal = Decimal("0.005")) -> bool:
+    if b == 0:
+        return abs(a) <= Decimal("0.01")
+    return abs(a - b) / abs(b) <= rel
+
+
+def _resolve_cdsl_mf_pnl_returns(
+    numerics: List[str],
+    value: Decimal,
+    invested: Optional[Decimal],
+    has_distrib_col: bool,
+) -> Tuple[Optional[Decimal], Optional[Decimal]]:
+    """Assign profit and return% from the post-value numeric tail.
+
+    Positional ``numerics[-2]`` / ``[-1]`` is wrong when the statement
+    omits a printed profit column and only shows return% — identity
+    ``value - invested`` picks profit when present; otherwise leave
+    ``pnl`` unset and treat a small trailing % as ``return_``."""
+    if not has_distrib_col:
+        return None, None
+
+    value_idx = 3 if len(numerics) >= 4 else 2
+    remaining = [_to_decimal(n) for n in numerics[value_idx + 1 :]]
+    remaining = [r for r in remaining if r != 0]
+
+    expected_pnl: Optional[Decimal] = None
+    if invested is not None and invested > 0:
+        expected_pnl = value - invested
+
+    pnl: Optional[Decimal] = None
+    ret: Optional[Decimal] = None
+
+    if expected_pnl is not None:
+        for r in remaining:
+            if _rel_close(r, expected_pnl):
+                pnl = r
+                break
+        if pnl is None and len(numerics) >= 6:
+            pos_pnl = _opt_decimal(numerics[-2])
+            if pos_pnl is not None and _rel_close(pos_pnl, expected_pnl):
+                pnl = pos_pnl
+
+    others = [r for r in remaining if r != pnl]
+    if pnl is not None and others:
+        ret = others[-1]
+    elif pnl is None and expected_pnl is not None:
+        for r in others:
+            if abs(r) < Decimal("100"):
+                ret = r
+                break
+    elif len(numerics) >= 5:
+        ret = _opt_decimal(numerics[-1])
+
+    if pnl == 0:
+        pnl = None
+    if ret == 0:
+        ret = None
+    return pnl, ret
+
+
 # --- account key utilities ---
 
 
@@ -586,8 +646,7 @@ def _parse_mf_holdings_row(
         # Reduced row: units | NAV | value (no separate invested/cost).
         invested = None
         value = _to_decimal(numerics[2])
-    pnl = _opt_decimal(numerics[-2]) if has_distrib_col and len(numerics) >= 6 else None
-    ret = _opt_decimal(numerics[-1]) if has_distrib_col and len(numerics) >= 5 else None
+    pnl, ret = _resolve_cdsl_mf_pnl_returns(numerics, value, invested, has_distrib_col)
 
     # Pull UCC from scheme_meta keyed on scheme_code (prefix of name)
     ucc = None
