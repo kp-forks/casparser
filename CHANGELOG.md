@@ -1,9 +1,12 @@
 # Changelog
 
-## 1.2.x
+## 1.3.0
 
 ### New
 
+- **NPS holdings (CDSL).** `NSDLCASData.nps` carries National Pension System
+  scheme holdings (scheme, fund manager, tier, asset class, units, NAV, value)
+  plus PRAN and NPS-SP. CDSL, holdings-only. (#128)
 - `NSDLCASData.parse_warnings` — non-fatal warnings for demat holdings whose
   numbers don't reconcile.
 
@@ -19,6 +22,8 @@
 ### Changed
 
 - `CapitalGainsReport` is lazy-loaded, keeping `import casparser` lighter.
+- Decimal money fields serialise consistently as JSON strings (models use
+  `Decimal`, not `Decimal | float`).
 
 ## 1.2.1
 
